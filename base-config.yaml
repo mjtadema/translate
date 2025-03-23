@@ -4,7 +4,6 @@ provider:
   args: {api_key: "api_key"}
 auto_translate:
 - room_id: '!roomid:example.com'
-  main_language: en
-  accepted_languages: [fi]
+  language_pair: ['nl','tr']
 # Whether bot responses should use Matrix replies.
 response_reply: true

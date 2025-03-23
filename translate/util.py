@@ -13,6 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from collections import defaultdict
 from typing import Optional, Tuple, NamedTuple, Set, Dict, TYPE_CHECKING
 from importlib import import_module
 
@@ -26,8 +27,7 @@ from .provider import AbstractTranslationProvider
 if TYPE_CHECKING:
     from .bot import TranslatorBot
 
-AutoTranslateConfig = NamedTuple("AutoTranslateConfig", main_language=str,
-                                 accepted_languages=Set[str])
+AutoTranslateConfig = NamedTuple("AutoTranslateConfig", language_pairs=list[tuple[str,str]])
 
 
 class TranslationProviderError(Exception):
@@ -53,10 +53,11 @@ class Config(BaseProxyConfig):
         except Exception as e:
             raise TranslationProviderError("Failed to initialize translation provider") from e
 
-    def load_auto_translate(self) -> Dict[RoomID, AutoTranslateConfig]:
-        atc = {value.get("room_id"): AutoTranslateConfig(value.get("main_language", "en"),
-                                                         set(value.get("accepted_languages", [])))
-               for value in self["auto_translate"] if "room_id" in value}
+    def load_auto_translate(self) -> Dict[RoomID, list]:
+        atc = defaultdict(list)
+        for value in self["auto_translate"]:
+            if "room_id" in value:
+                atc[value.get("room_id")].append(value.get("language_pair"))
         return atc
 
 

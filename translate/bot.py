@@ -13,6 +13,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import logging
 from typing import Optional, Tuple, Type, Dict
 
 from mautrix.util.config import BaseProxyConfig
@@ -20,20 +21,20 @@ from mautrix.types import RoomID, EventType, MessageType
 from maubot import Plugin, MessageEvent
 from maubot.handlers import command, event
 
+logger = logging.getLogger(__name__)
+
 from .provider import AbstractTranslationProvider
 from .util import Config, LanguageCodePair, TranslationProviderError, AutoTranslateConfig
 
 try:
-    import langdetect
-    from langdetect.lang_detect_exception import LangDetectException
+    import langid
 except ImportError:
-    langdetect = None
-    LangDetectException = None
+    langid = None
 
 
 class TranslatorBot(Plugin):
     translator: Optional[AbstractTranslationProvider]
-    auto_translate: Dict[RoomID, AutoTranslateConfig]
+    auto_translate: Dict[RoomID, list]
     config: Config
 
     async def start(self) -> None:
@@ -55,28 +56,39 @@ class TranslatorBot(Plugin):
 
     @event.on(EventType.ROOM_MESSAGE)
     async def event_handler(self, evt: MessageEvent) -> None:
-        if (langdetect is None or evt.content.msgtype == MessageType.NOTICE
+        if (langid is None or evt.content.msgtype == MessageType.NOTICE
                 or evt.sender == self.client.mxid):
             return
         try:
             atc = self.auto_translate[evt.room_id]
         except KeyError:
             return
-
-        def is_acceptable(lang: str) -> bool:
-            return lang == atc.main_language or lang in atc.accepted_languages
+        langs = []
+        for pair in atc:
+            langs.extend(pair)
+        langs = set(langs)
+        langid.set_languages(langs=langs)
 
         try:
-            if is_acceptable(langdetect.detect(evt.content.body)):
+            detected = langid.classify(evt.content.body)[0]
+            for pair in atc:
+                tmp = [*pair]
+                try:
+                    tmp.remove(detected)
+                    target = tmp[0]
+                    break
+                except ValueError:
+                    continue
+            else:
+                logger.debug(f'{detected} not in language pairs: {atc}')
                 return
-        except LangDetectException:
+        except Exception as e:
+            logging.exception(e)
             return
-        result = await self.translator.translate(evt.content.body, to_lang=atc.main_language)
-        if is_acceptable(result.source_language) or result.text == evt.content.body:
-            return
-        await evt.respond(f"[{evt.sender}](https://matrix.to/#/{evt.sender}) said "
-                          f"(in {self.translator.get_language_name(result.source_language)}): "
-                          f"{result.text}")
+
+        result = await self.translator.translate(evt.content.body, to_lang=target)
+        await evt.reply(result.text)
+
 
     @command.new("translate", aliases=["tr"])
     @LanguageCodePair("language", required=False)
