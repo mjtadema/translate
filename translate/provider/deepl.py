@@ -13,118 +13,78 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Dict, List, Pattern, Tuple, Any
+import logging
+from functools import partial
+from typing import Dict
 import asyncio
-import json
-import re
 
-from aiohttp import ClientSession
-from yarl import URL
+import deepl
 
 from . import AbstractTranslationProvider, Result
 
+logger = logging.getLogger(__name__)
+
 
 class DeepLTranslate(AbstractTranslationProvider):
-    url: URL = URL("https://www2.deepl.com/jsonrpc")
-    user_agent: str = ("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36")
-    headers: Dict[str, str] = {"User-Agent": user_agent, "Accept-Charset": "UTF-8", "DNT": 1,
-                               "Accept": "*/*", "Content-Type": "text/plain",
-                               "Connection": "keep-alive", "Origin": "https://www.deepl.com",
-                               "Referer": "https://www.deepl.com/translator"}
-    supported_languages: Dict[str, str] = {
-        "DE": "German", "EN": "English", "FR": "French", "ES": "Spanish", "IT": "Italian",
-        "NL": "Dutch", "PL": "Polish", "PT": "Portuguese", "RU": "Russian",
+    supported_languages = {
+        'ar': 'Arabic',
+        'bg': 'Bulgarian',
+        'cs': 'Czech',
+        'da': 'Danish',
+        'de': 'German',
+        'el': 'Greek',
+        'en-gb': 'English (British)',
+        'en-us': 'English (American)',
+        'es': 'Spanish',
+        'et': 'Estonian',
+        'fi': 'Finnish',
+        'fr': 'French',
+        'hu': 'Hungarian',
+        'id': 'Indonesian',
+        'it': 'Italian',
+        'ja': 'Japanese',
+        'ko': 'Korean',
+        'lt': 'Lithuanian',
+        'lv': 'Latvian',
+        'nb': 'Norwegian Bokmål',
+        'nl': 'Dutch',
+        'pl': 'Polish',
+        'pt-br': 'Portuguese (Brazilian)',
+        'pt-pt': 'Portuguese (all Portuguese variants excluding Brazilian Portuguese)',
+        'ro': 'Romanian',
+        'ru': 'Russian',
+        'sk': 'Slovak',
+        'sl': 'Slovenian',
+        'sv': 'Swedish',
+        'tr': 'Turkish',
+        'uk': 'Ukrainian',
+        'zh-hans': 'Chinese (simplified)',
+        'zh-hant': 'Chinese (traditional)'
     }
 
-    paragraph_regex: Pattern = re.compile(r"(?:\s*\n)+\s*")
-
-    _request_id: int
-
     def __init__(self, args: Dict) -> None:
+        try:
+            api_key = args.pop('api_key')
+        except KeyError as e:
+            logger.critical("deepl backend requires an api_key to be provided in args")
+            logger.exception(e)
+            raise e
+        self.translator = deepl.Translator(api_key)
         super().__init__(args)
-        self._request_id = 0
 
-    @property
-    def request_id(self) -> int:
-        self._request_id += 1
-        return self._request_id
-
-    async def _make_request(self, method: str, params: Dict[str, Any], sess: ClientSession) -> Any:
-        req = {
-            "id": self.request_id,
-            "method": f"LMT_{method}",
-            "jsonrpc": "2.0",
-            "params": params,
-        }
-        resp = await sess.post(self.url, headers=self.headers, data=json.dumps(req))
-        return await resp.json(content_type=None)
-
-    def _split_paragraphs(self, text: str) -> List[str]:
-        parts = (part.strip() for part in self.paragraph_regex.split(text))
-        return [part for part in parts if len(part) > 0]
-
-    async def _req_split_sentences(self, paragraphs: List[str], from_lang: str, sess: ClientSession,
-                                   ) -> Tuple[List[List[str]], str]:
-        data = await self._make_request("split_into_sentences", {
-            "texts": paragraphs,
-            "lang": {
-                "lang_user_selected": from_lang,
-                "user_preferred_langs": [],
-            }
-        }, sess=sess)
-        print(data)
-        return data["result"]["splitted_texts"], data["result"]["lang"]
-
-    async def _req_translate(self, paragraphs: List[List[str]], from_lang: str, to_lang: str,
-                             sess: ClientSession) -> List[List[str]]:
-        jobs = []
-        job_indexes = []
-        ji = 0
-        for pi, paragraph in enumerate(paragraphs):
-            for si, sentence in enumerate(paragraph):
-                jobs.append({
-                    "kind": "default",
-                    "raw_en_context_before": paragraph[:si],
-                    "raw_en_sentence": sentence,
-                    "raw_en_context_after": paragraph[si + 1:],
-                })
-                job_indexes.append((pi, si))
-        data = await self._make_request("handle_jobs", {
-            "jobs": jobs,
-            "lang": {
-                "source_lang_computed": from_lang,
-                "target_lang": to_lang,
-                "user_preferred_langs": [],
-            }
-        }, sess=sess)
-        print(data)
-        for ji, translation in enumerate(data["result"]["translations"].values()):
-            pi, si = job_indexes[ji]
-            if len(translation["beams"]) > 0:
-                paragraphs[pi][si] = translation["beams"][0]["postprocessed_sentence"]
-        return paragraphs
-
-    async def translate(self, text: str, to_lang: str, from_lang: str = "auto") -> Result:
-        if not from_lang:
-            from_lang = "auto"
-        elif from_lang != "auto":
-            from_lang = from_lang.upper()
-        to_lang = to_lang.upper()
-        async with ClientSession() as sess:
-            paragraphs, from_lang_computed = await self._req_split_sentences(
-                self._split_paragraphs(text), sess=sess, from_lang=from_lang)
-            await asyncio.sleep(1)
-            paragraphs = await self._req_translate(paragraphs, from_lang=from_lang_computed,
-                                                   to_lang=to_lang, sess=sess)
-            return Result(text="\n".join(" ".join(paragraph) for paragraph in paragraphs),
-                          source_language=from_lang_computed)
+    async def translate(self, text: str, to_lang: str, from_lang: str = 'auto') -> Result:
+        if from_lang == 'auto':
+            from_lang = None
+        loop = asyncio.get_event_loop()
+        translate_text = partial(self.translator.translate_text, text, target_lang=to_lang, source_lang=from_lang)
+        result = await loop.run_in_executor(None, translate_text)
+        return Result(text=result.text, source_language=from_lang if not from_lang is None else result.detected_source_lang)
 
     def is_supported_language(self, code: str) -> bool:
-        return code.upper() in self.supported_languages.keys()
+        return code.lower() in self.supported_languages.keys()
 
     def get_language_name(self, code: str) -> str:
-        return self.supported_languages[code]
+        return self.supported_languages.get(code.lower(), 'not supported')
 
 
 make_translation_provider = DeepLTranslate

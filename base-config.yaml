@@ -1,7 +1,7 @@
 # Translation provider settings
 provider:
-  id: google
-  args: {}
+  id: deepl
+  args: {api_key: "api_key"}
 auto_translate:
 - room_id: '!roomid:example.com'
   main_language: en
