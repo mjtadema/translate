@@ -56,7 +56,7 @@ class TranslatorBot(Plugin):
 
     @event.on(EventType.ROOM_MESSAGE)
     async def event_handler(self, evt: MessageEvent) -> None:
-        if (langid is None or evt.content.msgtype == MessageType.NOTICE
+        if (langid is None or evt.content.msgtype != MessageType.TEXT
                 or evt.sender == self.client.mxid):
             return
         try:
