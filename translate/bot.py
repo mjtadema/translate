@@ -64,7 +64,7 @@ class TranslatorBot(Plugin):
             return
 
         def is_acceptable(lang: str) -> bool:
-            return lang == atc.main_language or lang in atc.accepted_languages
+            return lang in atc.main_language or lang in atc.accepted_languages
 
         try:
             if is_acceptable(langdetect.detect(evt.content.body)):
