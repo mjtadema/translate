@@ -65,23 +65,23 @@ class TranslatorBot(Plugin):
             return
         langs = []
         for pair in atc:
-            langs.extend(pair)
+            # Only use the first two letters for langid
+            langs.extend([lang[:2] for lang in pair])
         langs = set(langs)
         langid.set_languages(langs=langs)
-
+        class Found(Exception): pass
         try:
             detected = langid.classify(evt.content.body)[0]
-            for pair in atc:
-                tmp = [*pair]
-                try:
-                    tmp.remove(detected)
-                    target = tmp[0]
-                    break
-                except ValueError:
-                    continue
-            else:
+            try:
+                for pair in atc:
+                    for i, l in enumerate(pair):
+                        if detected in l:
+                            target = pair[(i+1)%2]
+                            raise Found()
                 logger.debug(f'{detected} not in language pairs: {atc}')
                 return
+            except Found:
+                pass
         except Exception as e:
             logging.exception(e)
             return
